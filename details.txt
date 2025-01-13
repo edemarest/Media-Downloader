@@ -1,2 +1,5 @@
 repl link: https://replit.com/@elladem/Twitter-Media-Downloader
 monitor: https://dashboard.uptimerobot.com/monitors/798339985
+
+heroku config:set DISCORD_TOKEN=MTMyODE2MzkzOTcyNDU2MjUyMw.GPNNq6.daWRXJ5PcdU6u9a_iuC5tnElLBqajiUDka63wU
+heroku config:set TWITTER_API_KEY=AAAAAAAAAAAAAAAAAAAAAEF2yAEAAAAAlldMSSKYSmommTevFLKr6xWQyKc%3DvUEkOTW0t0V5VaFTgygnuHhnBX315kToEREIwy6yJyeTzzmc5y
