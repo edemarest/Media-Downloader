@@ -80,21 +80,43 @@ async function fetchTwitterMedia(tweetId) {
 
         console.log("Full Twitter API response:", JSON.stringify(response.data, null, 2));
         const media = response.data.includes?.media;
-        if (!media || media.length === 0) {
-            console.log("No media found in the API response.");
-            return [];
-        }
-
-        const mediaLinks = media.flatMap(item => {
-            if (item.type === "video" || item.type === "animated_gif") {
-                const bestVariant = item.variants?.find(v => v.content_type === "video/mp4");
-                return bestVariant ? [bestVariant.url] : [];
-            } else if (item.type === "photo") {
-                return [item.url];
+        if (mediaLinks.length > 0) {
+            console.log("Media links found:", mediaLinks);
+        
+            // Check if the first media link is a previewable type
+            const previewableMedia = mediaLinks.filter(link =>
+                link.endsWith(".mp4") || link.endsWith(".jpg") || link.endsWith(".png")
+            );
+        
+            if (previewableMedia.length > 0) {
+                await interaction.editReply({
+                    content: "✅ Media found! Previewable content below:",
+                    embeds: previewableMedia.map((link, i) => ({
+                        title: `Media ${i + 1}`,
+                        url: link,
+                        description: "Click to view in browser.",
+                        image: { url: link }, // For image previews
+                        video: { url: link }, // Discord auto-detects video embeds if supported
+                        footer: { text: "Twitter Media Preview" },
+                    })),
+                });
+            } else {
+                await interaction.editReply({
+                    content: "✅ Media found! Here are the links:",
+                    embeds: mediaLinks.map((link, i) => ({
+                        title: `Media ${i + 1}`,
+                        url: link,
+                        description: "Click to view in browser.",
+                        footer: { text: "Twitter Media Links" },
+                    })),
+                });
             }
-            return [];
-        });
-
+        } else {
+            console.log("No media found for the provided Tweet ID.");
+            await interaction.editReply(
+                "❌ No media found in the provided Twitter link."
+            );
+        }        
         console.log("Extracted media links:", mediaLinks);
         return mediaLinks;
     } catch (error) {
