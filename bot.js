@@ -10,6 +10,7 @@ const {
     SlashCommandBuilder,
 } = require("discord.js");
 const axios = require("axios");
+const { fetchInstagramMedia } = require("./ig_fetcher.js"); // Import Instagram Fetcher
 
 // Initialize the bot client
 console.log("⚙️ Initializing the bot client...");
@@ -21,21 +22,22 @@ const client = new Client({
     ],
 });
 
-// Bot token from environment variables
+// Load API tokens
 const discordToken = process.env.DISCORD_TOKEN;
 const twitterBearerTokens = [
     process.env.TWITTER_API_KEY_1,
     process.env.TWITTER_API_KEY_2,
 ];
+const instagramAccessToken = process.env.INSTAGRAM_ACCESS_TOKEN;
 
-if (!discordToken || twitterBearerTokens.some(token => !token)) {
-    console.error("❌ Missing tokens. Ensure .env contains DISCORD_TOKEN and TWITTER_API_KEY(s).");
+if (!discordToken || twitterBearerTokens.some(token => !token) || !instagramAccessToken) {
+    console.error("❌ Missing tokens. Ensure .env contains DISCORD_TOKEN, TWITTER_API_KEY(s), and INSTAGRAM_ACCESS_TOKEN.");
     process.exit(1);
 }
 
 console.log("🔐 Tokens loaded successfully.");
 
-// Function to rotate bearer tokens
+// Rotate Twitter bearer tokens
 let currentTokenIndex = 0;
 function getBearerToken() {
     const token = twitterBearerTokens[currentTokenIndex];
@@ -43,7 +45,7 @@ function getBearerToken() {
     return token;
 }
 
-// Debug: Indicate the bot is attempting to log in
+// Log in to Discord
 console.log("🔄 Attempting to log in...");
 client.login(discordToken)
     .then(() => console.log("🔐 Bot successfully logged in!"))
@@ -52,15 +54,13 @@ client.login(discordToken)
         process.exit(1);
     });
 
-// Function to extract tweet ID from URL
+// Function to extract Tweet ID
 function extractTweetId(url) {
-    const match = url.match(
-        /(?:https?:\/\/)?(?:www\.)?(?:twitter\.com|x\.com)\/(?:\w+)\/status\/(\d+)/,
-    );
+    const match = url.match(/(?:https?:\/\/)?(?:www\.)?(?:twitter\.com|x\.com)\/(?:\w+)\/status\/(\d+)/);
     return match ? match[1] : null;
 }
 
-// Function to fetch media from Twitter API
+// Function to fetch Twitter media
 async function fetchTwitterMedia(tweetId) {
     const apiUrl = `https://api.twitter.com/2/tweets/${tweetId}`;
     const params = {
@@ -72,97 +72,119 @@ async function fetchTwitterMedia(tweetId) {
         const token = getBearerToken();
         console.log(`Using bearer token: ${token}`);
         const response = await axios.get(apiUrl, {
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
+            headers: { Authorization: `Bearer ${token}` },
             params,
         });
 
         console.log("Full Twitter API response:", JSON.stringify(response.data, null, 2));
+
         const media = response.data.includes?.media;
-        if (mediaLinks.length > 0) {
-            console.log("Media links found:", mediaLinks);
-        
-            // Check if the first media link is a previewable type
-            const previewableMedia = mediaLinks.filter(link =>
-                link.endsWith(".mp4") || link.endsWith(".jpg") || link.endsWith(".png")
-            );
-        
-            if (previewableMedia.length > 0) {
-                await interaction.editReply({
-                    content: "✅ Media found! Previewable content below:",
-                    embeds: previewableMedia.map((link, i) => ({
-                        title: `Media ${i + 1}`,
-                        url: link,
-                        description: "Click to view in browser.",
-                        image: { url: link }, // For image previews
-                        video: { url: link }, // Discord auto-detects video embeds if supported
-                        footer: { text: "Twitter Media Preview" },
-                    })),
-                });
-            } else {
-                await interaction.editReply({
-                    content: "✅ Media found! Here are the links:",
-                    embeds: mediaLinks.map((link, i) => ({
-                        title: `Media ${i + 1}`,
-                        url: link,
-                        description: "Click to view in browser.",
-                        footer: { text: "Twitter Media Links" },
-                    })),
-                });
-            }
+        if (media?.length > 0) {
+            return media.map(m => m.url || m.preview_image_url).filter(Boolean);
         } else {
             console.log("No media found for the provided Tweet ID.");
-            await interaction.editReply(
-                "❌ No media found in the provided Twitter link."
-            );
-        }        
-        console.log("Extracted media links:", mediaLinks);
-        return mediaLinks;
-    } catch (error) {
-        if (error.response?.status === 429) {
-            console.error("Rate limit reached. Switching bearer tokens.");
-        } else {
-            console.error("Error fetching media:", error.response?.data || error.message);
+            return [];
         }
+    } catch (error) {
+        console.error("Error fetching Twitter media:", error.response?.data || error.message);
         return [];
     }
 }
 
-// Bot event: Interaction Create
+// Handle Discord Commands
 client.on("interactionCreate", async interaction => {
-    if (!interaction.isCommand() || interaction.commandName !== "twtmedia") {
-        return;
-    }
+    if (!interaction.isCommand()) return;
 
-    const twitterUrl = interaction.options.getString("url");
-    const tweetId = extractTweetId(twitterUrl);
+    if (interaction.commandName === "twtmedia") {
+        const twitterUrl = interaction.options.getString("url");
+        const tweetId = extractTweetId(twitterUrl);
 
-    if (!tweetId) {
-        await interaction.reply("❌ Invalid Twitter link.");
-        return;
-    }
-
-    try {
-        await interaction.deferReply();
-        const mediaLinks = await fetchTwitterMedia(tweetId);
-
-        if (mediaLinks.length > 0) {
-            await interaction.editReply({
-                content: "✅ Media found:",
-                files: mediaLinks.map((url, i) => ({
-                    attachment: url,
-                    name: `media_${i + 1}.${url.split('.').pop()}`,
-                })),
-            });
-        } else {
-            await interaction.editReply("❌ No media found in the provided Tweet.");
+        if (!tweetId) {
+            await interaction.reply("❌ Invalid Twitter link.");
+            return;
         }
-    } catch (error) {
-        console.error("Error processing interaction:", error.message);
-        await interaction.editReply("❌ An error occurred while processing the request.");
+
+        try {
+            await interaction.deferReply();
+            const mediaLinks = await fetchTwitterMedia(tweetId);
+
+            if (mediaLinks.length > 0) {
+                await interaction.editReply({
+                    content: "✅ Media found:",
+                    files: mediaLinks.map((url, i) => ({
+                        attachment: url,
+                        name: `media_${i + 1}.${url.split('.').pop()}`,
+                    })),
+                });
+            } else {
+                await interaction.editReply("❌ No media found in the provided Tweet.");
+            }
+        } catch (error) {
+            console.error("Error processing interaction:", error.message);
+            await interaction.editReply("❌ An error occurred while processing the request.");
+        }
+    }
+
+    // Instagram Media Fetching
+    if (interaction.commandName === "instamedia") {
+        const instagramUrl = interaction.options.getString("url");
+
+        try {
+            await interaction.deferReply();
+            const mediaData = await fetchInstagramMedia(instagramUrl);
+
+            if (mediaData.error) {
+                await interaction.editReply(`❌ ${mediaData.error}`);
+                return;
+            }
+
+            const embed = {
+                title: "Instagram Media",
+                url: mediaData.permalink,
+                image: { url: mediaData.thumbnailUrl },
+                footer: { text: "Instagram Media Fetched via API" },
+            };
+
+            await interaction.editReply({
+                content: "✅ Instagram media found:",
+                embeds: [embed],
+                files: mediaData.mediaType === "VIDEO" ? [mediaData.mediaUrl] : [],
+            });
+
+        } catch (error) {
+            console.error("Error processing Instagram interaction:", error.message);
+            await interaction.editReply("❌ An error occurred while fetching Instagram media.");
+        }
     }
 });
 
-// Debug: Log when bot.js finishes loading
-console.log("✅ bot.js loaded successfully.");
+// Register Slash Commands
+const commands = [
+    new SlashCommandBuilder()
+        .setName("twtmedia")
+        .setDescription("Fetch media from a Twitter post")
+        .addStringOption(option =>
+            option.setName("url")
+                .setDescription("Twitter post URL")
+                .setRequired(true)
+        ),
+    new SlashCommandBuilder()
+        .setName("instamedia")
+        .setDescription("Fetch media from an Instagram post or reel")
+        .addStringOption(option =>
+            option.setName("url")
+                .setDescription("Instagram post/reel URL")
+                .setRequired(true)
+        ),
+];
+
+const rest = new REST({ version: "10" }).setToken(discordToken);
+(async () => {
+    try {
+        console.log("🚀 Registering slash commands...");
+        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
+        console.log("✅ Slash commands registered successfully.");
+    } catch (error) {
+        console.error("❌ Failed to register commands:", error);
+    }
+})();
