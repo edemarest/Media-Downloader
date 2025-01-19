@@ -4,7 +4,8 @@
     "description": "A Discord bot for downloading Twitter media using the Twitter API.",
     "main": "bot.js",
     "scripts": {
-        "start": "node bot.js"
+        "start": "node server.js",
+        "worker": "node bot.js"
     },
     "author": "Your Name",
     "license": "MIT",
