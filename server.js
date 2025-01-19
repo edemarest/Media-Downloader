@@ -21,6 +21,9 @@ app.get("/webhook", (req, res) => {
     }
 });
 
-// Start server on the correct port
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Webhook server running on port ${PORT}`));
+
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 Webhook server running on port ${PORT}`);
+});
+
