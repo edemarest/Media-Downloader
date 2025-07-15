@@ -161,6 +161,77 @@ async function queueTwitterRequest(tweetId) {
     });
 }
 
+// Fallback function to use the scraper when API is rate limited
+async function fallbackToScraper(tweetId) {
+    try {
+        console.log("🔄 Falling back to Puppeteer scraper...");
+        const { spawn } = require('child_process');
+        const twitterUrl = `https://x.com/i/status/${tweetId}`;
+        
+        return new Promise((resolve) => {
+            const scraper = spawn('node', ['scraper.js', twitterUrl]);
+            let output = '';
+            let errorOutput = '';
+
+            const timeout = setTimeout(() => {
+                scraper.kill('SIGTERM');
+                console.log("⏰ Scraper timeout after 30 seconds");
+                resolve({ error: 'scraper_timeout' });
+            }, 30000); // 30 second timeout
+
+            scraper.stdout.on('data', (data) => {
+                output += data.toString();
+            });
+
+            scraper.stderr.on('data', (data) => {
+                errorOutput += data.toString();
+            });
+
+            scraper.on('close', (code) => {
+                clearTimeout(timeout);
+                
+                if (code === 0 && output.includes('Media successfully extracted')) {
+                    // Parse the scraper output to extract media URLs
+                    const lines = output.split('\n');
+                    const mediaLines = lines.filter(line => 
+                        line.includes('🎭 GIF') || 
+                        line.includes('🎬 Video') || 
+                        line.includes('🖼️ Image')
+                    );
+                    
+                    const mediaLinks = mediaLines.map((line, index) => {
+                        const url = line.split(': ')[1];
+                        const isGif = line.includes('🎭 GIF');
+                        const isVideo = line.includes('🎬 Video');
+                        
+                        return {
+                            url: url,
+                            type: isGif ? "gif" : isVideo ? "video" : "image",
+                            filename: isGif ? `animation_${index + 1}.gif` : 
+                                     isVideo ? `video_${index + 1}.mp4` : `image_${index + 1}.jpg`
+                        };
+                    });
+                    
+                    console.log(`✅ Scraper found ${mediaLinks.length} media items`);
+                    resolve({ success: true, media: mediaLinks });
+                } else {
+                    console.log("⚠️ Scraper didn't find any media");
+                    resolve({ error: 'no_media_found' });
+                }
+            });
+
+            scraper.on('error', (error) => {
+                clearTimeout(timeout);
+                console.error("❌ Scraper process error:", error);
+                resolve({ error: 'scraper_failed' });
+            });
+        });
+    } catch (error) {
+        console.error("❌ Scraper fallback failed:", error);
+        return { error: 'scraper_exception' };
+    }
+}
+
 // Rename the original function
 async function fetchTwitterMediaDirect(tweetId) {
     const apiUrl = `https://api.twitter.com/2/tweets/${tweetId}`;
@@ -172,6 +243,7 @@ async function fetchTwitterMediaDirect(tweetId) {
     // Rate limit handling with exponential backoff
     const maxRetries = 3;
     let retryDelay = 1000; // Start with 1 second
+    let allTokensRateLimited = false;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -283,7 +355,7 @@ async function fetchTwitterMediaDirect(tweetId) {
             }
             
             console.log(`Final extracted media links (${mediaLinks.length}):`, mediaLinks);
-            return mediaLinks;
+            return { success: true, media: mediaLinks };
 
         } catch (error) {
             if (error.response?.status === 429) {
@@ -295,9 +367,24 @@ async function fetchTwitterMediaDirect(tweetId) {
                     retryDelay *= 2; // Exponential backoff
                     continue;
                 } else {
+                    allTokensRateLimited = true;
                     console.error("❌ All bearer tokens are rate limited. Falling back to scraper...");
-                    return await fallbackToScraper(tweetId);
+                    const scraperResult = await fallbackToScraper(tweetId);
+                    if (scraperResult.success) {
+                        return { success: true, media: scraperResult.media };
+                    } else {
+                        return { 
+                            error: 'rate_limited_and_scraper_failed',
+                            scraperError: scraperResult.error
+                        };
+                    }
                 }
+            } else if (error.response?.status === 404) {
+                console.error("❌ Tweet not found (404)");
+                return { error: 'tweet_not_found' };
+            } else if (error.response?.status === 403) {
+                console.error("❌ Tweet access forbidden (403) - may be private or deleted");
+                return { error: 'tweet_access_forbidden' };
             } else {
                 console.error("Error fetching media:", error.response?.data || error.message);
                 
@@ -307,70 +394,13 @@ async function fetchTwitterMediaDirect(tweetId) {
                     retryDelay *= 2;
                     continue;
                 } else {
-                    return [];
+                    return { error: 'api_error', details: error.message };
                 }
             }
         }
     }
     
-    return [];
-}
-
-// Fallback function to use the scraper when API is rate limited
-async function fallbackToScraper(tweetId) {
-    try {
-        console.log("🔄 Falling back to Puppeteer scraper...");
-        const { spawn } = require('child_process');
-        const twitterUrl = `https://x.com/i/status/${tweetId}`;
-        
-        return new Promise((resolve) => {
-            const scraper = spawn('node', ['scraper.js', twitterUrl]);
-            let output = '';
-            let errorOutput = '';
-
-            scraper.stdout.on('data', (data) => {
-                output += data.toString();
-            });
-
-            scraper.stderr.on('data', (data) => {
-                errorOutput += data.toString();
-            });
-
-            scraper.on('close', (code) => {
-                if (code === 0 && output.includes('Media successfully extracted')) {
-                    // Parse the scraper output to extract media URLs
-                    const lines = output.split('\n');
-                    const mediaLines = lines.filter(line => 
-                        line.includes('🎭 GIF') || 
-                        line.includes('🎬 Video') || 
-                        line.includes('🖼️ Image')
-                    );
-                    
-                    const mediaLinks = mediaLines.map((line, index) => {
-                        const url = line.split(': ')[1];
-                        const isGif = line.includes('🎭 GIF');
-                        const isVideo = line.includes('🎬 Video');
-                        
-                        return {
-                            url: url,
-                            type: isGif ? "gif" : isVideo ? "video" : "image",
-                            filename: isGif ? `animation_${index + 1}.gif` : 
-                                     isVideo ? `video_${index + 1}.mp4` : `image_${index + 1}.jpg`
-                        };
-                    });
-                    
-                    console.log(`✅ Scraper found ${mediaLinks.length} media items`);
-                    resolve(mediaLinks);
-                } else {
-                    console.log("⚠️ Scraper didn't find any media");
-                    resolve([]);
-                }
-            });
-        });
-    } catch (error) {
-        console.error("❌ Scraper fallback failed:", error);
-        return [];
-    }
+    return { error: 'unknown_error' };
 }
 
 // New wrapper function that uses the queue
@@ -421,19 +451,30 @@ client.on("interactionCreate", async interaction => {
     const tweetId = extractTweetId(twitterUrl);
 
     if (!tweetId) {
-        await interaction.reply("ERROR: Invalid Twitter link.");
+        await interaction.reply({
+            content: "❌ **Invalid Twitter/X URL**\n\n" +
+                    "Please provide a valid Twitter or X.com URL in one of these formats:\n" +
+                    "• `https://twitter.com/username/status/1234567890`\n" +
+                    "• `https://x.com/username/status/1234567890`\n" +
+                    "• `https://mobile.twitter.com/username/status/1234567890`",
+            ephemeral: true
+        });
         return;
     }
 
     try {
         await interaction.deferReply();
-        const mediaLinks = await fetchTwitterMedia(tweetId);
+        
+        // Show initial processing message
+        await interaction.editReply("🔍 **Searching for media...**\nProcessing your request, please wait...");
+        
+        const result = await fetchTwitterMedia(tweetId);
 
-        if (mediaLinks.length > 0) {
+        if (result.success && result.media && result.media.length > 0) {
             const files = [];
-            let contentMessage = "SUCCESS: Media found:\n";
+            let contentMessage = "✅ **Media Successfully Downloaded!**\n\n";
             
-            for (const media of mediaLinks) {
+            for (const media of result.media) {
                 files.push({
                     attachment: media.url,
                     name: media.filename
@@ -441,19 +482,105 @@ client.on("interactionCreate", async interaction => {
                 
                 const mediaType = media.type === "gif" ? "🎭 GIF" : 
                                  media.type === "video" ? "🎬 Video" : "🖼️ Image";
-                contentMessage += `${mediaType}: ${media.filename}\n`;
+                contentMessage += `${mediaType} **${media.filename}**\n`;
             }
+            
+            contentMessage += `\n📎 **${files.length}** file(s) attached`;
 
             await interaction.editReply({
                 content: contentMessage,
                 files: files
             });
         } else {
-            await interaction.editReply("ERROR: No media found in the provided Tweet.");
+            // Handle different error cases with specific messages
+            let errorMessage = "";
+            
+            switch (result.error) {
+                case 'rate_limited_and_scraper_failed':
+                    errorMessage = "⚠️ **Rate Limited - Service Temporarily Unavailable**\n\n" +
+                                  "• Twitter's API rate limits have been exceeded\n" +
+                                  "• Backup scraper also failed to retrieve media\n" +
+                                  "• Please try again in **15-30 minutes**\n\n" +
+                                  "💡 **Tip**: This happens during high traffic periods. Try again later!";
+                    break;
+                    
+                case 'tweet_not_found':
+                    errorMessage = "❌ **Tweet Not Found**\n\n" +
+                                  "• The tweet may have been **deleted**\n" +
+                                  "• The URL might be **incorrect**\n" +
+                                  "• The tweet ID may be **invalid**\n\n" +
+                                  "Please double-check the Twitter/X URL and try again.";
+                    break;
+                    
+                case 'tweet_access_forbidden':
+                    errorMessage = "🔒 **Access Denied**\n\n" +
+                                  "• The tweet may be from a **private account**\n" +
+                                  "• The account may have **restricted access**\n" +
+                                  "• The tweet may have been **suspended**\n\n" +
+                                  "Only public tweets can be processed.";
+                    break;
+                    
+                case 'no_media_found':
+                    errorMessage = "📭 **No Media Found**\n\n" +
+                                  "• This tweet contains **only text** (no images/videos/GIFs)\n" +
+                                  "• Media may be **embedded links** instead of direct uploads\n" +
+                                  "• The tweet might have **quote tweets** with media instead\n\n" +
+                                  "💡 Only directly uploaded Twitter media can be downloaded.";
+                    break;
+                    
+                case 'scraper_timeout':
+                    errorMessage = "⏰ **Request Timeout**\n\n" +
+                                  "• The request took too long to process\n" +
+                                  "• Twitter may be experiencing **slow response times**\n" +
+                                  "• Please try again in a few minutes\n\n" +
+                                  "This usually resolves itself quickly.";
+                    break;
+                    
+                case 'scraper_failed':
+                    errorMessage = "🔧 **Technical Difficulties**\n\n" +
+                                  "• Our backup systems are experiencing issues\n" +
+                                  "• This may be due to **Twitter blocking automated access**\n" +
+                                  "• Please try again later\n\n" +
+                                  "If this persists, contact the bot administrator.";
+                    break;
+                    
+                case 'api_error':
+                    errorMessage = "⚠️ **Twitter API Error**\n\n" +
+                                  "• Twitter's servers returned an error\n" +
+                                  "• This is usually **temporary**\n" +
+                                  "• Please try again in a few minutes\n\n" +
+                                  `Technical details: ${result.details || 'Unknown error'}`;
+                    break;
+                    
+                default:
+                    errorMessage = "❌ **Unknown Error**\n\n" +
+                                  "• An unexpected error occurred\n" +
+                                  "• Please try again in a few minutes\n" +
+                                  "• If this continues, contact the bot administrator\n\n" +
+                                  "Error code: `UNKNOWN_ERROR`";
+                    break;
+            }
+            
+            await interaction.editReply({
+                content: errorMessage,
+                files: []
+            });
         }
     } catch (error) {
         console.error("Error processing interaction:", error.message);
-        await interaction.editReply("ERROR: An error occurred while processing the request.");
+        
+        try {
+            await interaction.editReply({
+                content: "💥 **Critical Error**\n\n" +
+                        "• An unexpected system error occurred\n" +
+                        "• This has been logged for investigation\n" +
+                        "• Please try again later\n\n" +
+                        "If this error persists, please contact the bot administrator.",
+                files: []
+            });
+        } catch (editError) {
+            console.error("Failed to edit reply with error message:", editError);
+        }
     }
 });
 
