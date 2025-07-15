@@ -49,8 +49,32 @@ client.login(discordToken)
     .then(() => console.log("🔐 Bot successfully logged in!"))
     .catch(error => {
         console.error(`❌ Failed to log in: ${error.message}`);
+        console.error("❌ Check if DISCORD_TOKEN is valid and has proper permissions");
         process.exit(1);
     });
+
+// Global error handling
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error);
+    process.exit(1);
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+    console.log('🛑 Received SIGINT, shutting down gracefully...');
+    client.destroy();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    console.log('🛑 Received SIGTERM, shutting down gracefully...');
+    client.destroy();
+    process.exit(0);
+});
 
 // Function to extract tweet ID from URL
 function extractTweetId(url) {
@@ -80,43 +104,25 @@ async function fetchTwitterMedia(tweetId) {
 
         console.log("Full Twitter API response:", JSON.stringify(response.data, null, 2));
         const media = response.data.includes?.media;
-        if (mediaLinks.length > 0) {
-            console.log("Media links found:", mediaLinks);
         
-            // Check if the first media link is a previewable type
-            const previewableMedia = mediaLinks.filter(link =>
-                link.endsWith(".mp4") || link.endsWith(".jpg") || link.endsWith(".png")
-            );
+        // Extract media URLs
+        const mediaLinks = [];
+        if (media && media.length > 0) {
+            media.forEach(item => {
+                if (item.type === "photo") {
+                    mediaLinks.push(item.url);
+                } else if (item.type === "video" && item.variants) {
+                    // Get highest quality video
+                    const highestQuality = item.variants
+                        .filter(variant => variant.content_type === "video/mp4")
+                        .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0))[0];
+                    if (highestQuality) {
+                        mediaLinks.push(highestQuality.url);
+                    }
+                }
+            });
+        }
         
-            if (previewableMedia.length > 0) {
-                await interaction.editReply({
-                    content: "✅ Media found! Previewable content below:",
-                    embeds: previewableMedia.map((link, i) => ({
-                        title: `Media ${i + 1}`,
-                        url: link,
-                        description: "Click to view in browser.",
-                        image: { url: link }, // For image previews
-                        video: { url: link }, // Discord auto-detects video embeds if supported
-                        footer: { text: "Twitter Media Preview" },
-                    })),
-                });
-            } else {
-                await interaction.editReply({
-                    content: "✅ Media found! Here are the links:",
-                    embeds: mediaLinks.map((link, i) => ({
-                        title: `Media ${i + 1}`,
-                        url: link,
-                        description: "Click to view in browser.",
-                        footer: { text: "Twitter Media Links" },
-                    })),
-                });
-            }
-        } else {
-            console.log("No media found for the provided Tweet ID.");
-            await interaction.editReply(
-                "❌ No media found in the provided Twitter link."
-            );
-        }        
         console.log("Extracted media links:", mediaLinks);
         return mediaLinks;
     } catch (error) {
@@ -161,6 +167,36 @@ client.on("interactionCreate", async interaction => {
     } catch (error) {
         console.error("Error processing interaction:", error.message);
         await interaction.editReply("❌ An error occurred while processing the request.");
+    }
+});
+
+// Bot event: Ready
+client.on("ready", async () => {
+    console.log(`✅ Bot logged in as ${client.user.tag}`);
+    
+    // Register slash commands
+    const commands = [
+        new SlashCommandBuilder()
+            .setName("twtmedia")
+            .setDescription("Download media from Twitter/X posts")
+            .addStringOption(option =>
+                option.setName("url")
+                    .setDescription("Twitter/X post URL")
+                    .setRequired(true)
+            )
+    ];
+
+    const rest = new REST({ version: "10" }).setToken(discordToken);
+    
+    try {
+        console.log("🔄 Registering slash commands...");
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands.map(command => command.toJSON()) }
+        );
+        console.log("✅ Slash commands registered successfully!");
+    } catch (error) {
+        console.error("❌ Failed to register slash commands:", error);
     }
 });
 
