@@ -14,7 +14,13 @@ app.get('/', (req, res) => {
     res.json({ 
         status: 'Media Downloader Bot is running!',
         timestamp: new Date().toISOString(),
-        uptime: process.uptime()
+        uptime: process.uptime(),
+        environment: {
+            node_version: process.version,
+            platform: process.platform,
+            has_discord_token: !!process.env.DISCORD_TOKEN,
+            has_twitter_keys: !!(process.env.TWITTER_API_KEY_1 && process.env.TWITTER_API_KEY_2)
+        }
     });
 });
 
@@ -60,32 +66,54 @@ app.post('/scrape', async (req, res) => {
     }
 });
 
-// Start the Discord bot
-console.log('Starting Discord bot...');
-const botProcess = spawn('node', ['bot.js'], { 
-    stdio: ['pipe', 'pipe', 'pipe'],
-    detached: false
-});
+// Check if required environment variables are present
+if (!process.env.DISCORD_TOKEN) {
+    console.warn('⚠️  WARNING: DISCORD_TOKEN environment variable is missing!');
+    console.warn('⚠️  The Discord bot will not start without a valid token.');
+    console.warn('⚠️  Please set DISCORD_TOKEN in your deployment environment variables.');
+}
 
-botProcess.stdout.on('data', (data) => {
-    console.log(`Bot: ${data.toString().trim()}`);
-});
+if (!process.env.TWITTER_API_KEY_1 || !process.env.TWITTER_API_KEY_2) {
+    console.warn('⚠️  WARNING: Twitter API keys are missing!');
+    console.warn('⚠️  The bot may not function properly without Twitter API access.');
+}
 
-botProcess.stderr.on('data', (data) => {
-    console.error(`Bot Error: ${data.toString().trim()}`);
-});
+// Start the Discord bot only if token is present
+let botProcess = null;
+if (process.env.DISCORD_TOKEN) {
+    console.log('Starting Discord bot...');
+    botProcess = spawn('node', ['bot.js'], { 
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: false
+    });
 
-botProcess.on('error', (error) => {
-    console.error('Bot process error:', error);
-});
+    botProcess.stdout.on('data', (data) => {
+        console.log(`Bot: ${data.toString().trim()}`);
+    });
 
-botProcess.on('close', (code) => {
-    console.log(`Bot process exited with code ${code}`);
-});
+    botProcess.stderr.on('data', (data) => {
+        console.error(`Bot Error: ${data.toString().trim()}`);
+    });
+
+    botProcess.on('error', (error) => {
+        console.error('Bot process error:', error);
+    });
+
+    botProcess.on('close', (code) => {
+        console.log(`Bot process exited with code ${code}`);
+        if (code !== 0) {
+            console.error('Bot crashed. Server will continue running for health checks.');
+        }
+    });
+} else {
+    console.log('🔧 Discord bot not started - missing DISCORD_TOKEN');
+    console.log('🌐 Web server will run for health checks only');
+}
 
 // Start the web server
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Keep-alive server running on port ${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
 });
 
 // Graceful shutdown

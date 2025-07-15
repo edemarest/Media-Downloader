@@ -28,17 +28,29 @@ const twitterBearerTokens = [
     process.env.TWITTER_API_KEY_2,
 ].filter(Boolean); // Remove undefined tokens
 
+// Validate required environment variables
 if (!discordToken) {
-    console.error("ERROR: Missing DISCORD_TOKEN in environment variables.");
+    console.error("❌ ERROR: Missing DISCORD_TOKEN in environment variables.");
+    console.error("💡 Please set DISCORD_TOKEN in your deployment platform:");
+    console.error("   - For Render: Go to your service dashboard > Environment");
+    console.error("   - Add: DISCORD_TOKEN = your_bot_token_here");
+    process.exit(1);
+}
+
+// Validate Discord token format (basic check)
+if (!discordToken.match(/^[A-Za-z0-9._-]+$/)) {
+    console.error("❌ ERROR: DISCORD_TOKEN appears to be malformed.");
+    console.error("💡 Discord tokens should contain only letters, numbers, dots, underscores, and hyphens.");
     process.exit(1);
 }
 
 if (twitterBearerTokens.length === 0) {
-    console.error("ERROR: No valid Twitter API keys found in environment variables.");
-    process.exit(1);
+    console.warn("⚠️  WARNING: No valid Twitter API keys found in environment variables.");
+    console.warn("⚠️  Twitter media fetching will not work without API keys.");
+    console.warn("💡 Please set TWITTER_API_KEY_1 and TWITTER_API_KEY_2 in your environment variables.");
+} else {
+    console.log(`✅ Tokens loaded successfully. Using ${twitterBearerTokens.length} Twitter API key(s).`);
 }
-
-console.log(`Tokens loaded successfully. Using ${twitterBearerTokens.length} Twitter API key(s).`);
 
 // Function to rotate bearer tokens
 let currentTokenIndex = 0;
@@ -49,12 +61,31 @@ function getBearerToken() {
 }
 
 // Debug: Indicate the bot is attempting to log in
-console.log("Attempting to log in...");
+console.log("🔐 Attempting to log in to Discord...");
+console.log(`🤖 Token length: ${discordToken.length} characters`);
+console.log(`🔑 Token starts with: ${discordToken.substring(0, 10)}...`);
+
 client.login(discordToken)
-    .then(() => console.log("Bot successfully logged in!"))
+    .then(() => {
+        console.log("✅ Bot successfully logged in to Discord!");
+    })
     .catch(error => {
-        console.error(`ERROR: Failed to log in: ${error.message}`);
-        console.error("ERROR: Check if DISCORD_TOKEN is valid and has proper permissions");
+        console.error(`❌ ERROR: Failed to log in to Discord: ${error.message}`);
+        
+        if (error.message.includes('An invalid token was provided')) {
+            console.error("💡 SOLUTION: Your Discord token is invalid. Please check:");
+            console.error("   1. Copy the token from Discord Developer Portal");
+            console.error("   2. Go to: https://discord.com/developers/applications");
+            console.error("   3. Select your bot > Bot > Token");
+            console.error("   4. Copy the token and update your environment variables");
+            console.error("   5. Make sure there are no extra spaces or characters");
+        }
+        
+        console.error("🔧 Environment variables status:");
+        console.error(`   - DISCORD_TOKEN: ${discordToken ? 'Present' : 'Missing'} (${discordToken ? discordToken.length : 0} chars)`);
+        console.error(`   - TWITTER_API_KEY_1: ${process.env.TWITTER_API_KEY_1 ? 'Present' : 'Missing'}`);
+        console.error(`   - TWITTER_API_KEY_2: ${process.env.TWITTER_API_KEY_2 ? 'Present' : 'Missing'}`);
+        
         process.exit(1);
     });
 
