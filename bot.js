@@ -144,18 +144,40 @@ async function fetchTwitterMedia(tweetId) {
         // Extract media URLs
         const mediaLinks = [];
         if (media && media.length > 0) {
-            media.forEach(item => {
+            media.forEach((item, index) => {
+                console.log(`Processing media item ${index + 1}:`, item.type);
+                
                 if (item.type === "photo") {
+                    console.log(`Found photo: ${item.url}`);
                     mediaLinks.push({
                         url: item.url,
                         type: "image",
                         filename: `image_${mediaLinks.length + 1}.jpg`
                     });
+                } else if (item.type === "animated_gif" && item.variants) {
+                    console.log(`Found animated GIF with ${item.variants.length} variants`);
+                    // Handle animated GIFs specifically
+                    const mp4Variant = item.variants
+                        .filter(variant => variant.content_type === "video/mp4")
+                        .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0))[0];
+                    
+                    if (mp4Variant) {
+                        console.log(`Selected GIF variant: ${mp4Variant.url}`);
+                        mediaLinks.push({
+                            url: mp4Variant.url,
+                            type: "gif",
+                            filename: `animation_${mediaLinks.length + 1}.gif`
+                        });
+                    } else {
+                        console.log("No MP4 variant found for animated GIF");
+                    }
                 } else if (item.type === "video" && item.variants) {
+                    console.log(`Found video with duration: ${item.duration_ms}ms`);
                     // Check if this is actually a GIF (no duration_ms or very short duration)
                     const isGif = !item.duration_ms || item.duration_ms < 15000; // Less than 15 seconds likely indicates GIF
                     
                     if (isGif) {
+                        console.log("Treating short video as GIF");
                         // For GIFs, try to find the MP4 variant but treat it as a GIF
                         const mp4Variant = item.variants
                             .filter(variant => variant.content_type === "video/mp4")
@@ -169,6 +191,7 @@ async function fetchTwitterMedia(tweetId) {
                             });
                         }
                     } else {
+                        console.log("Processing as regular video");
                         // Regular video - get highest quality
                         const highestQuality = item.variants
                             .filter(variant => variant.content_type === "video/mp4")
@@ -182,21 +205,12 @@ async function fetchTwitterMedia(tweetId) {
                             });
                         }
                     }
-                } else if (item.type === "animated_gif" && item.variants) {
-                    // Handle animated GIFs specifically
-                    const mp4Variant = item.variants
-                        .filter(variant => variant.content_type === "video/mp4")
-                        .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0))[0];
-                    
-                    if (mp4Variant) {
-                        mediaLinks.push({
-                            url: mp4Variant.url,
-                            type: "gif",
-                            filename: `animation_${mediaLinks.length + 1}.gif`
-                        });
-                    }
+                } else {
+                    console.log(`Unknown media type: ${item.type}`);
                 }
             });
+        } else {
+            console.log("No media found in API response");
         }
         
         console.log("Extracted media links:", mediaLinks);
