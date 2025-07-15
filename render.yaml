@@ -3,6 +3,7 @@ services:
     name: twitter-media-downloader
     env: node
     plan: free
+    runtime: nodejs
     buildCommand: npm install
     startCommand: node server.js
     envVars:
