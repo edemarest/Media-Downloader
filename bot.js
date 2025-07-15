@@ -125,7 +125,7 @@ async function fetchTwitterMedia(tweetId) {
     const apiUrl = `https://api.twitter.com/2/tweets/${tweetId}`;
     const params = {
         expansions: "attachments.media_keys",
-        "media.fields": "media_key,type,url,preview_image_url,variants",
+        "media.fields": "media_key,type,url,preview_image_url,variants,duration_ms",
     };
 
     try {
@@ -146,14 +146,54 @@ async function fetchTwitterMedia(tweetId) {
         if (media && media.length > 0) {
             media.forEach(item => {
                 if (item.type === "photo") {
-                    mediaLinks.push(item.url);
+                    mediaLinks.push({
+                        url: item.url,
+                        type: "image",
+                        filename: `image_${mediaLinks.length + 1}.jpg`
+                    });
                 } else if (item.type === "video" && item.variants) {
-                    // Get highest quality video
-                    const highestQuality = item.variants
+                    // Check if this is actually a GIF (no duration_ms or very short duration)
+                    const isGif = !item.duration_ms || item.duration_ms < 15000; // Less than 15 seconds likely indicates GIF
+                    
+                    if (isGif) {
+                        // For GIFs, try to find the MP4 variant but treat it as a GIF
+                        const mp4Variant = item.variants
+                            .filter(variant => variant.content_type === "video/mp4")
+                            .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0))[0];
+                        
+                        if (mp4Variant) {
+                            mediaLinks.push({
+                                url: mp4Variant.url,
+                                type: "gif",
+                                filename: `animation_${mediaLinks.length + 1}.gif`
+                            });
+                        }
+                    } else {
+                        // Regular video - get highest quality
+                        const highestQuality = item.variants
+                            .filter(variant => variant.content_type === "video/mp4")
+                            .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0))[0];
+                        
+                        if (highestQuality) {
+                            mediaLinks.push({
+                                url: highestQuality.url,
+                                type: "video",
+                                filename: `video_${mediaLinks.length + 1}.mp4`
+                            });
+                        }
+                    }
+                } else if (item.type === "animated_gif" && item.variants) {
+                    // Handle animated GIFs specifically
+                    const mp4Variant = item.variants
                         .filter(variant => variant.content_type === "video/mp4")
                         .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0))[0];
-                    if (highestQuality) {
-                        mediaLinks.push(highestQuality.url);
+                    
+                    if (mp4Variant) {
+                        mediaLinks.push({
+                            url: mp4Variant.url,
+                            type: "gif",
+                            filename: `animation_${mediaLinks.length + 1}.gif`
+                        });
                     }
                 }
             });
@@ -222,12 +262,23 @@ client.on("interactionCreate", async interaction => {
         const mediaLinks = await fetchTwitterMedia(tweetId);
 
         if (mediaLinks.length > 0) {
+            const files = [];
+            let contentMessage = "SUCCESS: Media found:\n";
+            
+            for (const media of mediaLinks) {
+                files.push({
+                    attachment: media.url,
+                    name: media.filename
+                });
+                
+                const mediaType = media.type === "gif" ? "🎭 GIF" : 
+                                 media.type === "video" ? "🎬 Video" : "🖼️ Image";
+                contentMessage += `${mediaType}: ${media.filename}\n`;
+            }
+
             await interaction.editReply({
-                content: "SUCCESS: Media found:",
-                files: mediaLinks.map((url, i) => ({
-                    attachment: url,
-                    name: `media_${i + 1}.${url.split('.').pop()}`,
-                })),
+                content: contentMessage,
+                files: files
             });
         } else {
             await interaction.editReply("ERROR: No media found in the provided Tweet.");

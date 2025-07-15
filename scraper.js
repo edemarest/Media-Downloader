@@ -34,14 +34,39 @@ async function scrapeTweetMedia(url) {
     fs.writeFileSync("debug_page.html", pageContent);
     console.log("📄 Full page content saved to debug_page.html.");
 
-    let videoUrl = null;
+    let mediaUrls = [];
+    let isGif = false;
 
-    console.log("🌐 Intercepting network requests for video...");
+    console.log("🌐 Intercepting network requests for media...");
     page.on("response", async (response) => {
         const responseUrl = response.url();
-        if (responseUrl.includes(".mp4")) {
-            console.log(`🎥 Found video URL: ${responseUrl}`);
-            videoUrl = responseUrl;
+        
+        // Check for video/GIF content
+        if (responseUrl.includes(".mp4") || responseUrl.includes("video_formats")) {
+            console.log(`🎥 Found video/animation URL: ${responseUrl}`);
+            
+            // Try to determine if this is a GIF by checking the tweet content
+            try {
+                const tweetText = await page.$eval('[data-testid="tweetText"]', el => el.textContent.toLowerCase());
+                isGif = tweetText.includes('gif') || responseUrl.includes('tweet_video');
+            } catch (e) {
+                // If we can't get tweet text, check URL patterns
+                isGif = responseUrl.includes('tweet_video') || responseUrl.includes('amplify_video');
+            }
+            
+            mediaUrls.push({
+                url: responseUrl,
+                type: isGif ? 'gif' : 'video'
+            });
+        }
+        
+        // Check for image content
+        if (responseUrl.includes(".jpg") || responseUrl.includes(".png") || responseUrl.includes("media")) {
+            console.log(`🖼️ Found image URL: ${responseUrl}`);
+            mediaUrls.push({
+                url: responseUrl,
+                type: 'image'
+            });
         }
     });
 
@@ -56,12 +81,13 @@ async function scrapeTweetMedia(url) {
     console.log("⏳ Waiting a few seconds to capture all requests...");
     await new Promise((resolve) => setTimeout(resolve, 5000)); // Replaced page.waitForTimeout()
 
-    if (!videoUrl) {
-        console.log("⚠️ No video URL found. Extracting poster image as fallback...");
+    if (mediaUrls.length === 0) {
+        console.log("⚠️ No media URLs found. Extracting poster image as fallback...");
         try {
-            videoUrl = await page.$eval("video[poster]", (video) => video.getAttribute("poster"));
-            if (videoUrl) {
-                console.log("🖼️ Poster image found:", videoUrl);
+            const posterUrl = await page.$eval("video[poster]", (video) => video.getAttribute("poster"));
+            if (posterUrl) {
+                console.log("🖼️ Poster image found:", posterUrl);
+                mediaUrls.push({ url: posterUrl, type: 'image' });
             }
         } catch (error) {
             console.error("❌ Error extracting poster image:", error.message);
@@ -70,9 +96,14 @@ async function scrapeTweetMedia(url) {
 
     await browser.close();
 
-    if (videoUrl) {
-        console.log("✅ Media successfully extracted:", videoUrl);
-        return videoUrl;
+    if (mediaUrls.length > 0) {
+        console.log("✅ Media successfully extracted:");
+        mediaUrls.forEach((media, index) => {
+            const mediaType = media.type === 'gif' ? '🎭 GIF' : 
+                             media.type === 'video' ? '🎬 Video' : '🖼️ Image';
+            console.log(`${mediaType} ${index + 1}: ${media.url}`);
+        });
+        return mediaUrls;
     }
 
     console.log("⚠️ No media found.");
@@ -90,9 +121,13 @@ async function scrapeTweetMedia(url) {
     console.log(`🔗 Provided Twitter URL: ${twitterUrl}`);
     const media = await scrapeTweetMedia(twitterUrl);
 
-    console.log("\n📥 Media URL:");
-    if (media) {
-        console.log(`🎥 ${media}`);
+    console.log("\n📥 Media URLs:");
+    if (media && media.length > 0) {
+        media.forEach((item, index) => {
+            const mediaType = item.type === 'gif' ? '🎭 GIF' : 
+                             item.type === 'video' ? '🎬 Video' : '🖼️ Image';
+            console.log(`${mediaType} ${index + 1}: ${item.url}`);
+        });
     } else {
         console.log("⚠️ No media found.");
     }
