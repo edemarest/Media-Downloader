@@ -26,14 +26,19 @@ const discordToken = process.env.DISCORD_TOKEN;
 const twitterBearerTokens = [
     process.env.TWITTER_API_KEY_1,
     process.env.TWITTER_API_KEY_2,
-];
+].filter(Boolean); // Remove undefined tokens
 
-if (!discordToken || twitterBearerTokens.some(token => !token)) {
-    console.error("ERROR: Missing tokens. Ensure .env contains DISCORD_TOKEN and TWITTER_API_KEY(s).");
+if (!discordToken) {
+    console.error("ERROR: Missing DISCORD_TOKEN in environment variables.");
     process.exit(1);
 }
 
-console.log("Tokens loaded successfully.");
+if (twitterBearerTokens.length === 0) {
+    console.error("ERROR: No valid Twitter API keys found in environment variables.");
+    process.exit(1);
+}
+
+console.log(`Tokens loaded successfully. Using ${twitterBearerTokens.length} Twitter API key(s).`);
 
 // Function to rotate bearer tokens
 let currentTokenIndex = 0;
@@ -135,6 +140,38 @@ async function fetchTwitterMedia(tweetId) {
     }
 }
 
+// Register slash commands
+const commands = [
+    new SlashCommandBuilder()
+        .setName('twtmedia')
+        .setDescription('Download media from a Twitter/X post')
+        .addStringOption(option =>
+            option.setName('url')
+                .setDescription('The Twitter/X post URL')
+                .setRequired(true)),
+];
+
+// Bot ready event
+client.once('ready', async () => {
+    console.log(`✅ Bot is ready! Logged in as ${client.user.tag}`);
+    
+    // Register slash commands
+    const rest = new REST({ version: '10' }).setToken(discordToken);
+    
+    try {
+        console.log('Started refreshing application (/) commands.');
+        
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands },
+        );
+        
+        console.log('Successfully reloaded application (/) commands.');
+    } catch (error) {
+        console.error('Error registering slash commands:', error);
+    }
+});
+
 // Bot event: Interaction Create
 client.on("interactionCreate", async interaction => {
     if (!interaction.isCommand() || interaction.commandName !== "twtmedia") {
@@ -169,8 +206,6 @@ client.on("interactionCreate", async interaction => {
         await interaction.editReply("ERROR: An error occurred while processing the request.");
     }
 });
-
-// ...existing code...
 
 // Debug: Log when bot.js finishes loading
 console.log("SUCCESS: bot.js loaded successfully.");

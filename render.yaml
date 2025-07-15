@@ -1,17 +1,17 @@
 services:
   - type: web
-    name: twitter-media-downloader
-    env: node
-    plan: free
-    runtime: nodejs
+    name: media-downloader-bot
+    runtime: node
     buildCommand: npm install
-    startCommand: node server.js
+    startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
-      - key: DISCORD_TOKEN
-        sync: false  # Set this in Render dashboard
-      - key: TWITTER_API_KEY_1
+      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+        value: true
+    scaling:
+      minInstances: 1
+      maxInstances: 1
         sync: false  # Set this in Render dashboard
       - key: TWITTER_API_KEY_2
         sync: false  # Set this in Render dashboard

@@ -5,7 +5,10 @@
     "main": "server.js",
     "scripts": {
         "start": "node server.js",
-        "dev": "node server.js"
+        "dev": "node server.js",
+        "bot": "node bot.js",
+        "scraper": "node scraper.js",
+        "build": "echo 'No build step required for Node.js'"
     },
     "author": "Your Name",
     "license": "MIT",
