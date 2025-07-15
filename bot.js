@@ -373,85 +373,89 @@ async function fallbackToScraper(tweetId) {
     }
 }
 
-// Register slash commandsl = interaction.options.getString("url");
+// New wrapper function that uses the queue
+async function fetchTwitterMedia(tweetId) {
+    console.log(`📝 Adding tweet ${tweetId} to request queue (position: ${requestQueue.length + 1})`);
+    return await queueTwitterRequest(tweetId);
+}
+
+// Register slash commands
 const commands = [
     new SlashCommandBuilder()
-        .setName('twtmedia')f (!tweetId) {
-        .setDescription('Download media from a Twitter/X post')        await interaction.reply("ERROR: Invalid Twitter link.");
-        .addStringOption(option =>eturn;
+        .setName('twtmedia')
+        .setDescription('Download media from a Twitter/X post')
+        .addStringOption(option =>
             option.setName('url')
                 .setDescription('The Twitter/X post URL')
-                .setRequired(true)),    try {
-];();
-ait fetchTwitterMedia(tweetId);
+                .setRequired(true)),
+];
+
 // Bot ready event
-client.once('ready', async () => {mediaLinks.length > 0) {
+client.once('ready', async () => {
     console.log(`✅ Bot is ready! Logged in as ${client.user.tag}`);
-    ge = "SUCCESS: Media found:\n";
+    
     // Register slash commands
-    const rest = new REST({ version: '10' }).setToken(discordToken);ks) {
-    es.push({
-    try {    attachment: media.url,
+    const rest = new REST({ version: '10' }).setToken(discordToken);
+    
+    try {
         console.log('Started refreshing application (/) commands.');
         
         await rest.put(
-            Routes.applicationCommands(client.user.id),   const mediaType = media.type === "gif" ? "🎭 GIF" : 
-            { body: commands },                                 media.type === "video" ? "🎬 Video" : "🖼️ Image";
-        );aType}: ${media.filename}\n`;
+            Routes.applicationCommands(client.user.id),
+            { body: commands },
+        );
         
         console.log('Successfully reloaded application (/) commands.');
-    } catch (error) {it interaction.editReply({
-        console.error('Error registering slash commands:', error);content: contentMessage,
+    } catch (error) {
+        console.error('Error registering slash commands:', error);
     }
-});   });
+});
 
-// Bot event: Interaction Createprovided Tweet.");
+// Bot event: Interaction Create
 client.on("interactionCreate", async interaction => {
-    if (!interaction.isCommand() || interaction.commandName !== "twtmedia") { catch (error) {
-        return;     console.error("Error processing interaction:", error.message);
-    }        await interaction.editReply("ERROR: An error occurred while processing the request.");
+    if (!interaction.isCommand() || interaction.commandName !== "twtmedia") {
+        return;
+    }
 
-    const tweetId = extractTweetId(interaction.options.getString('url'));
-    
+    const twitterUrl = interaction.options.getString("url");
+    const tweetId = extractTweetId(twitterUrl);
 
+    if (!tweetId) {
+        await interaction.reply("ERROR: Invalid Twitter link.");
+        return;
+    }
 
+    try {
+        await interaction.deferReply();
+        const mediaLinks = await fetchTwitterMedia(tweetId);
 
+        if (mediaLinks.length > 0) {
+            const files = [];
+            let contentMessage = "SUCCESS: Media found:\n";
+            
+            for (const media of mediaLinks) {
+                files.push({
+                    attachment: media.url,
+                    name: media.filename
+                });
+                
+                const mediaType = media.type === "gif" ? "🎭 GIF" : 
+                                 media.type === "video" ? "🎬 Video" : "🖼️ Image";
+                contentMessage += `${mediaType}: ${media.filename}\n`;
+            }
 
+            await interaction.editReply({
+                content: contentMessage,
+                files: files
+            });
+        } else {
+            await interaction.editReply("ERROR: No media found in the provided Tweet.");
+        }
+    } catch (error) {
+        console.error("Error processing interaction:", error.message);
+        await interaction.editReply("ERROR: An error occurred while processing the request.");
+    }
+});
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-console.log("SUCCESS: bot.js loaded successfully.");// Debug: Log when bot.js finishes loading});    }        await interaction.editReply("ERROR: An error occurred while processing the request.");        console.error("Error processing interaction:", error.message);    } catch (error) {        }            await interaction.editReply("ERROR: No media found in the provided Tweet.");        } else {            });                files: files                content: contentMessage,            await interaction.editReply({            }                contentMessage += `${mediaType}: ${media.filename}\n`;                                 media.type === "video" ? "🎬 Video" : "🖼️ Image";                const mediaType = media.type === "gif" ? "🎭 GIF" :                                 });                    name: media.filename                    attachment: media.url,                files.push({            for (const media of mediaLinks) {                        let contentMessage = "SUCCESS: Media found:\n";            const files = [];        if (mediaLinks.length > 0) {        const mediaLinks = await fetchTwitterMedia(tweetId);        await interaction.deferReply();    try {    }        return;        await interaction.reply("ERROR: Invalid Twitter link.");    if (!tweetId) {// Debug: Log when bot.js finishes loading
+// Debug: Log when bot.js finishes loading
 console.log("SUCCESS: bot.js loaded successfully.");
