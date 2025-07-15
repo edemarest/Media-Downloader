@@ -26,6 +26,9 @@ const discordToken = process.env.DISCORD_TOKEN;
 const twitterBearerTokens = [
     process.env.TWITTER_API_KEY_1,
     process.env.TWITTER_API_KEY_2,
+    process.env.TWITTER_API_KEY_3,
+    process.env.TWITTER_API_KEY_4,
+    process.env.TWITTER_API_KEY_5,
 ].filter(Boolean); // Remove undefined tokens
 
 // Validate required environment variables
@@ -120,188 +123,335 @@ function extractTweetId(url) {
     return match ? match[1] : null;
 }
 
-// Function to fetch media from Twitter API
-async function fetchTwitterMedia(tweetId) {
+// Request queue to avoid rate limits
+const requestQueue = [];
+let isProcessingQueue = false;
+const RATE_LIMIT_DELAY = 15000; // 15 seconds between requests
+
+async function processQueue() {
+    if (isProcessingQueue || requestQueue.length === 0) return;
+    
+    isProcessingQueue = true;
+    
+    while (requestQueue.length > 0) {
+        const { tweetId, resolve, reject } = requestQueue.shift();
+        
+        try {
+            console.log(`🔄 Processing queued request for tweet ${tweetId}`);
+            const result = await fetchTwitterMediaDirect(tweetId);
+            resolve(result);
+        } catch (error) {
+            reject(error);
+        }
+        
+        // Wait before processing next request
+        if (requestQueue.length > 0) {
+            console.log(`⏳ Waiting ${RATE_LIMIT_DELAY/1000}s before next request...`);
+            await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+        }
+    }
+    
+    isProcessingQueue = false;
+}
+
+async function queueTwitterRequest(tweetId) {
+    return new Promise((resolve, reject) => {
+        requestQueue.push({ tweetId, resolve, reject });
+        processQueue();
+    });
+}
+
+// Rename the original function
+async function fetchTwitterMediaDirect(tweetId) {
     const apiUrl = `https://api.twitter.com/2/tweets/${tweetId}`;
     const params = {
         expansions: "attachments.media_keys",
         "media.fields": "media_key,type,url,preview_image_url,variants,duration_ms",
     };
 
-    try {
-        const token = getBearerToken();
-        console.log(`Using bearer token: ${token}`);
-        const response = await axios.get(apiUrl, {
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
-            params,
-        });
+    // Rate limit handling with exponential backoff
+    const maxRetries = 3;
+    let retryDelay = 1000; // Start with 1 second
 
-        console.log("Full Twitter API response:", JSON.stringify(response.data, null, 2));
-        const media = response.data.includes?.media;
-        
-        // Extract media URLs
-        const mediaLinks = [];
-        if (media && media.length > 0) {
-            media.forEach((item, index) => {
-                console.log(`Processing media item ${index + 1}:`, item.type);
-                
-                if (item.type === "photo") {
-                    console.log(`Found photo: ${item.url}`);
-                    mediaLinks.push({
-                        url: item.url,
-                        type: "image",
-                        filename: `image_${mediaLinks.length + 1}.jpg`
-                    });
-                } else if (item.type === "animated_gif" && item.variants) {
-                    console.log(`Found animated GIF with ${item.variants.length} variants`);
-                    // Handle animated GIFs specifically
-                    const mp4Variant = item.variants
-                        .filter(variant => variant.content_type === "video/mp4")
-                        .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0))[0];
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const token = getBearerToken();
+            console.log(`Attempt ${attempt}: Using bearer token: ${token.substring(0, 20)}...`);
+            
+            const response = await axios.get(apiUrl, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+                params,
+            });
+
+            console.log("✅ Twitter API request successful");
+            const media = response.data.includes?.media;
+            
+            // Extract media URLs
+            const mediaLinks = [];
+            if (media && media.length > 0) {
+                media.forEach((item, index) => {
+                    console.log(`Processing media item ${index + 1}: type=${item.type}`);
                     
-                    if (mp4Variant) {
-                        console.log(`Selected GIF variant: ${mp4Variant.url}`);
+                    if (item.type === "photo") {
+                        console.log(`Found photo: ${item.url}`);
                         mediaLinks.push({
-                            url: mp4Variant.url,
-                            type: "gif",
-                            filename: `animation_${mediaLinks.length + 1}.gif`
+                            url: item.url,
+                            type: "image",
+                            filename: `image_${index + 1}.jpg`
                         });
-                    } else {
-                        console.log("No MP4 variant found for animated GIF");
-                    }
-                } else if (item.type === "video" && item.variants) {
-                    console.log(`Found video with duration: ${item.duration_ms}ms`);
-                    // Check if this is actually a GIF (no duration_ms or very short duration)
-                    const isGif = !item.duration_ms || item.duration_ms < 15000; // Less than 15 seconds likely indicates GIF
-                    
-                    if (isGif) {
-                        console.log("Treating short video as GIF");
-                        // For GIFs, try to find the MP4 variant but treat it as a GIF
-                        const mp4Variant = item.variants
-                            .filter(variant => variant.content_type === "video/mp4")
-                            .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0))[0];
+                    } else if (item.type === "animated_gif") {
+                        console.log(`Found animated GIF with ${item.variants?.length || 0} variants`);
                         
-                        if (mp4Variant) {
+                        if (item.variants && item.variants.length > 0) {
+                            const mp4Variant = item.variants
+                                .filter(variant => variant.content_type === "video/mp4")
+                                .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0))[0];
+                            
+                            if (mp4Variant) {
+                                console.log(`Selected GIF variant: ${mp4Variant.url}`);
+                                mediaLinks.push({
+                                    url: mp4Variant.url,
+                                    type: "gif",
+                                    filename: `animation_${index + 1}.gif`
+                                });
+                            } else {
+                                const anyVariant = item.variants[0];
+                                if (anyVariant && anyVariant.url) {
+                                    mediaLinks.push({
+                                        url: anyVariant.url,
+                                        type: "gif",
+                                        filename: `animation_${index + 1}.gif`
+                                    });
+                                }
+                            }
+                        } else if (item.preview_image_url) {
+                            console.log(`Using preview image: ${item.preview_image_url}`);
                             mediaLinks.push({
-                                url: mp4Variant.url,
-                                type: "gif",
-                                filename: `animation_${mediaLinks.length + 1}.gif`
+                                url: item.preview_image_url,
+                                type: "image",
+                                filename: `gif_preview_${index + 1}.jpg`
                             });
                         }
-                    } else {
-                        console.log("Processing as regular video");
-                        // Regular video - get highest quality
-                        const highestQuality = item.variants
-                            .filter(variant => variant.content_type === "video/mp4")
-                            .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0))[0];
+                    } else if (item.type === "video") {
+                        console.log(`Found video with duration: ${item.duration_ms}ms, variants: ${item.variants?.length || 0}`);
                         
-                        if (highestQuality) {
+                        if (item.variants && item.variants.length > 0) {
+                            const isGif = !item.duration_ms || item.duration_ms < 15000;
+                            
+                            const mp4Variant = item.variants
+                                .filter(variant => variant.content_type === "video/mp4")
+                                .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0))[0];
+                            
+                            if (mp4Variant) {
+                                mediaLinks.push({
+                                    url: mp4Variant.url,
+                                    type: isGif ? "gif" : "video",
+                                    filename: isGif ? `animation_${index + 1}.gif` : `video_${index + 1}.mp4`
+                                });
+                            } else {
+                                const anyVariant = item.variants[0];
+                                if (anyVariant && anyVariant.url) {
+                                    mediaLinks.push({
+                                        url: anyVariant.url,
+                                        type: isGif ? "gif" : "video",
+                                        filename: isGif ? `animation_${index + 1}.gif` : `video_${index + 1}.mp4`
+                                    });
+                                }
+                            }
+                        }
+                    } else {
+                        console.log(`Unknown media type: ${item.type}, trying to extract URL anyway`);
+                        if (item.url) {
                             mediaLinks.push({
-                                url: highestQuality.url,
-                                type: "video",
-                                filename: `video_${mediaLinks.length + 1}.mp4`
+                                url: item.url,
+                                type: "unknown",
+                                filename: `media_${index + 1}.jpg`
+                            });
+                        } else if (item.preview_image_url) {
+                            mediaLinks.push({
+                                url: item.preview_image_url,
+                                type: "image",
+                                filename: `preview_${index + 1}.jpg`
                             });
                         }
                     }
+                });
+            } else {
+                console.log("No media found in API response includes");
+            }
+            
+            console.log(`Final extracted media links (${mediaLinks.length}):`, mediaLinks);
+            return mediaLinks;
+
+        } catch (error) {
+            if (error.response?.status === 429) {
+                console.error(`⚠️ Rate limit hit on attempt ${attempt}/${maxRetries}`);
+                
+                if (attempt < maxRetries) {
+                    console.log(`⏳ Waiting ${retryDelay}ms before retry...`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    retryDelay *= 2; // Exponential backoff
+                    continue;
                 } else {
-                    console.log(`Unknown media type: ${item.type}`);
+                    console.error("❌ All bearer tokens are rate limited. Falling back to scraper...");
+                    return await fallbackToScraper(tweetId);
+                }
+            } else {
+                console.error("Error fetching media:", error.response?.data || error.message);
+                
+                if (attempt < maxRetries) {
+                    console.log(`⏳ Retrying in ${retryDelay}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    retryDelay *= 2;
+                    continue;
+                } else {
+                    return [];
+                }
+            }
+        }
+    }
+    
+    return [];
+}
+
+// Fallback function to use the scraper when API is rate limited
+async function fallbackToScraper(tweetId) {
+    try {
+        console.log("🔄 Falling back to Puppeteer scraper...");
+        const { spawn } = require('child_process');
+        const twitterUrl = `https://x.com/i/status/${tweetId}`;
+        
+        return new Promise((resolve) => {
+            const scraper = spawn('node', ['scraper.js', twitterUrl]);
+            let output = '';
+            let errorOutput = '';
+
+            scraper.stdout.on('data', (data) => {
+                output += data.toString();
+            });
+
+            scraper.stderr.on('data', (data) => {
+                errorOutput += data.toString();
+            });
+
+            scraper.on('close', (code) => {
+                if (code === 0 && output.includes('Media successfully extracted')) {
+                    // Parse the scraper output to extract media URLs
+                    const lines = output.split('\n');
+                    const mediaLines = lines.filter(line => 
+                        line.includes('🎭 GIF') || 
+                        line.includes('🎬 Video') || 
+                        line.includes('🖼️ Image')
+                    );
+                    
+                    const mediaLinks = mediaLines.map((line, index) => {
+                        const url = line.split(': ')[1];
+                        const isGif = line.includes('🎭 GIF');
+                        const isVideo = line.includes('🎬 Video');
+                        
+                        return {
+                            url: url,
+                            type: isGif ? "gif" : isVideo ? "video" : "image",
+                            filename: isGif ? `animation_${index + 1}.gif` : 
+                                     isVideo ? `video_${index + 1}.mp4` : `image_${index + 1}.jpg`
+                        };
+                    });
+                    
+                    console.log(`✅ Scraper found ${mediaLinks.length} media items`);
+                    resolve(mediaLinks);
+                } else {
+                    console.log("⚠️ Scraper didn't find any media");
+                    resolve([]);
                 }
             });
-        } else {
-            console.log("No media found in API response");
-        }
-        
-        console.log("Extracted media links:", mediaLinks);
-        return mediaLinks;
+        });
     } catch (error) {
-        if (error.response?.status === 429) {
-            console.error("Rate limit reached. Switching bearer tokens.");
-        } else {
-            console.error("Error fetching media:", error.response?.data || error.message);
-        }
+        console.error("❌ Scraper fallback failed:", error);
         return [];
     }
 }
 
-// Register slash commands
+// Register slash commandsl = interaction.options.getString("url");
 const commands = [
     new SlashCommandBuilder()
-        .setName('twtmedia')
-        .setDescription('Download media from a Twitter/X post')
-        .addStringOption(option =>
+        .setName('twtmedia')f (!tweetId) {
+        .setDescription('Download media from a Twitter/X post')        await interaction.reply("ERROR: Invalid Twitter link.");
+        .addStringOption(option =>eturn;
             option.setName('url')
                 .setDescription('The Twitter/X post URL')
-                .setRequired(true)),
-];
-
+                .setRequired(true)),    try {
+];();
+ait fetchTwitterMedia(tweetId);
 // Bot ready event
-client.once('ready', async () => {
+client.once('ready', async () => {mediaLinks.length > 0) {
     console.log(`✅ Bot is ready! Logged in as ${client.user.tag}`);
-    
+    ge = "SUCCESS: Media found:\n";
     // Register slash commands
-    const rest = new REST({ version: '10' }).setToken(discordToken);
-    
-    try {
+    const rest = new REST({ version: '10' }).setToken(discordToken);ks) {
+    es.push({
+    try {    attachment: media.url,
         console.log('Started refreshing application (/) commands.');
         
         await rest.put(
-            Routes.applicationCommands(client.user.id),
-            { body: commands },
-        );
+            Routes.applicationCommands(client.user.id),   const mediaType = media.type === "gif" ? "🎭 GIF" : 
+            { body: commands },                                 media.type === "video" ? "🎬 Video" : "🖼️ Image";
+        );aType}: ${media.filename}\n`;
         
         console.log('Successfully reloaded application (/) commands.');
-    } catch (error) {
-        console.error('Error registering slash commands:', error);
+    } catch (error) {it interaction.editReply({
+        console.error('Error registering slash commands:', error);content: contentMessage,
     }
-});
+});   });
 
-// Bot event: Interaction Create
+// Bot event: Interaction Createprovided Tweet.");
 client.on("interactionCreate", async interaction => {
-    if (!interaction.isCommand() || interaction.commandName !== "twtmedia") {
-        return;
-    }
+    if (!interaction.isCommand() || interaction.commandName !== "twtmedia") { catch (error) {
+        return;     console.error("Error processing interaction:", error.message);
+    }        await interaction.editReply("ERROR: An error occurred while processing the request.");
 
-    const twitterUrl = interaction.options.getString("url");
-    const tweetId = extractTweetId(twitterUrl);
+    const tweetId = extractTweetId(interaction.options.getString('url'));
+    
 
-    if (!tweetId) {
-        await interaction.reply("ERROR: Invalid Twitter link.");
-        return;
-    }
 
-    try {
-        await interaction.deferReply();
-        const mediaLinks = await fetchTwitterMedia(tweetId);
 
-        if (mediaLinks.length > 0) {
-            const files = [];
-            let contentMessage = "SUCCESS: Media found:\n";
-            
-            for (const media of mediaLinks) {
-                files.push({
-                    attachment: media.url,
-                    name: media.filename
-                });
-                
-                const mediaType = media.type === "gif" ? "🎭 GIF" : 
-                                 media.type === "video" ? "🎬 Video" : "🖼️ Image";
-                contentMessage += `${mediaType}: ${media.filename}\n`;
-            }
 
-            await interaction.editReply({
-                content: contentMessage,
-                files: files
-            });
-        } else {
-            await interaction.editReply("ERROR: No media found in the provided Tweet.");
-        }
-    } catch (error) {
-        console.error("Error processing interaction:", error.message);
-        await interaction.editReply("ERROR: An error occurred while processing the request.");
-    }
-});
 
-// Debug: Log when bot.js finishes loading
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+console.log("SUCCESS: bot.js loaded successfully.");// Debug: Log when bot.js finishes loading});    }        await interaction.editReply("ERROR: An error occurred while processing the request.");        console.error("Error processing interaction:", error.message);    } catch (error) {        }            await interaction.editReply("ERROR: No media found in the provided Tweet.");        } else {            });                files: files                content: contentMessage,            await interaction.editReply({            }                contentMessage += `${mediaType}: ${media.filename}\n`;                                 media.type === "video" ? "🎬 Video" : "🖼️ Image";                const mediaType = media.type === "gif" ? "🎭 GIF" :                                 });                    name: media.filename                    attachment: media.url,                files.push({            for (const media of mediaLinks) {                        let contentMessage = "SUCCESS: Media found:\n";            const files = [];        if (mediaLinks.length > 0) {        const mediaLinks = await fetchTwitterMedia(tweetId);        await interaction.deferReply();    try {    }        return;        await interaction.reply("ERROR: Invalid Twitter link.");    if (!tweetId) {// Debug: Log when bot.js finishes loading
 console.log("SUCCESS: bot.js loaded successfully.");
