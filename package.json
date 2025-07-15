@@ -2,9 +2,10 @@
     "name": "media-downloader",
     "version": "1.0.0",
     "description": "A Discord bot for downloading Twitter media using the Twitter API.",
-    "main": "bot.js",
+    "main": "server.js",
     "scripts": {
-        "start": "node bot.js"
+        "start": "node server.js",
+        "dev": "node server.js"
     },
     "author": "Your Name",
     "license": "MIT",
@@ -18,6 +19,6 @@
         "puppeteer": "^24.0.0"
     },
     "engines": {
-        "node": "16.x || 18.x"
+        "node": "18.x"
     }
 }

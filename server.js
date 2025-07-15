@@ -31,10 +31,10 @@ app.get('/ping', (req, res) => {
 
 // Start the server
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🌐 Keep-alive server running on port ${PORT}`);
-    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+    console.log(`Keep-alive server running on port ${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
 });
 
 // Import and start the Discord bot
-console.log('🤖 Starting Discord bot...');
+console.log('Starting Discord bot...');
 require('./bot.js');
